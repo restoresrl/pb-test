@@ -1,0 +1,14 @@
+*.pbl
+*.pbd
+*.exe
+*.xml
+!templates/*.pbt
+pb.ini
+.venv/
+__pycache__/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
