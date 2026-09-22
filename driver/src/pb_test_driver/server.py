@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pb_test_driver import junit, run, ui
+from pb_test_driver import protocol, requests, run, ui
 
 
 def build_server() -> Any:
@@ -32,8 +32,8 @@ def build_server() -> Any:
         A conflict between that XML and an explicit request fails before launch.
         The driver does not verify every loaded DLL. `accessibility` writes
         `[Application] ACCESSIBILITY=1` into pb.ini next to the exe so the UI tools
-        can see DataWindow contents. For a pb-test test target pass
-        `args='/out=C:\\path\\result.xml /exit'`.
+        can see DataWindow contents. For suites call pb_test_prepare first,
+        then launch using the same work_dir. No test command-line switches are needed.
         """
         r = run.start(exe, args, work_dir, runtime_version, runtime_dir, accessibility)
         return r.info()
@@ -61,12 +61,44 @@ def build_server() -> Any:
         return run.runs()
 
     @mcp.tool()
-    def pb_run_results(path: str) -> dict[str, Any]:
-        """Parse the JUnit XML a pb-test target wrote (the /out= path)."""
-        results = junit.parse_file(path)
-        data = results.to_dict()
-        data["summary"] = results.summary()
-        return data
+    def pb_run_results(
+        path: str, request_id: str | None = None, application: str | None = None
+    ) -> dict[str, Any]:
+        """Validate a completed JSON report. Does not certify process exit.
+
+        Prefer pb_test_status with the receipt to check request correlation.
+        """
+        return protocol.report(path, request_id, application)
+
+    @mcp.tool()
+    def pb_test_prepare(
+        application: str, work_dir: str, out: str, suite: str = "", ttl: int = 1800
+    ) -> dict[str, Any]:
+        """Reserve a target and publish its one-shot JSON request.
+
+        application is the Application object, not necessarily the EXE stem.
+        work_dir must be the actual startup directory. For IDE runs ask the
+        user to press Run after this call. For EXE runs use pb_run_start next.
+        """
+        return requests.prepare(application, work_dir, out, suite, ttl)
+
+    @mcp.tool()
+    def pb_test_status(receipt: str) -> dict[str, Any]:
+        """Read request state and correlated JSON results, without a process handle."""
+        return requests.status(receipt)
+
+    @mcp.tool()
+    def pb_test_wait(receipt: str, timeout: float = 60.0) -> dict[str, Any]:
+        """Wait for IDE or EXE test results. Timeout never kills or cancels a run."""
+        return requests.wait(receipt, timeout)
+
+    @mcp.tool()
+    def pb_test_cleanup(receipt: str) -> dict[str, Any]:
+        """Cancel an unclaimed request or release a completed slot; retain evidence.
+
+        Refuses active, invalid and missing requests. Never stops the IDE.
+        """
+        return requests.cleanup(receipt)
 
     @mcp.tool()
     def pb_ui_windows(run_id: str) -> list[dict[str, Any]]:

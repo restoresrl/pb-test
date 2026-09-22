@@ -22,6 +22,7 @@ protected subroutine of_discover (ref string as_tests[])
 protected function string of_describe_error (runtimeerror are_error)
 protected subroutine of_compare (boolean ab_null_expected, boolean ab_null_actual, boolean ab_equal, string as_expected, string as_actual, string as_message)
 public subroutine of_fail (string as_message)
+public subroutine of_progress (string as_message)
 public subroutine of_assert_true (boolean ab_condition, string as_message)
 public subroutine of_assert_false (boolean ab_condition, string as_message)
 public subroutine of_assert_equal (string as_expected, string as_actual, string as_message)
@@ -42,6 +43,7 @@ inv_report = anv_report
 is_suite_name = as_suite
 ls_case = Lower(ClassName(this))
 of_discover(ls_tests)
+inv_report.of_begin_case(Max(1, UpperBound(ls_tests)))
 if UpperBound(ls_tests) = 0 then
 	inv_report.of_begin_test(as_suite, ls_case, "(discovery)")
 	inv_report.of_add_error("test case declares no test_* events")
@@ -62,6 +64,8 @@ for ll_i = 1 to UpperBound(ls_tests)
 			this.event teardown()
 		catch (RuntimeError lre_teardown)
 			inv_report.of_add_error("teardown: " + of_describe_error(lre_teardown))
+		catch (Throwable lth_teardown)
+			inv_report.of_add_error("teardown: " + lth_teardown.GetMessage())
 		end try
 	end try
 	if inv_report.of_status(inv_report.of_count()) <> "pass" then ll_failed = ll_failed + 1
@@ -123,6 +127,10 @@ if ab_null_actual then
 	return
 end if
 if IsNull(ab_equal) or not ab_equal then of_fail(ls_prefix + "expected '" + as_expected + "' but was '" + as_actual + "'")
+end subroutine
+
+public subroutine of_progress (string as_message);// Cooperative checkpoint: changes UI text, never counts or results.
+if IsValid(inv_report) then inv_report.of_note(as_message)
 end subroutine
 
 public subroutine of_fail (string as_message);if IsValid(inv_report) then inv_report.of_add_failure(as_message)

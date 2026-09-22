@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "pb-test request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "application", "output", "expires_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+    "application": {"type": "string", "pattern": "^[a-z_][a-z0-9_]*$"},
+    "suite": {"type": "string", "pattern": "^([a-z_][a-z0-9_]*)?$", "default": ""},
+    "output": {"type": "string", "minLength": 1},
+    "expires_at": {"type": "integer", "minimum": 1, "description": "UTC Unix epoch seconds; expiry limits acquisition, not test duration"}
+  }
+}

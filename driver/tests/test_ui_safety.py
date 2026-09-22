@@ -31,6 +31,27 @@ def test_value_cannot_silently_replace_when_append_requested() -> None:
         ui.type_text("not-a-run", None, {}, "text", method="value", clear=False)
 
 
+@pytest.mark.parametrize("method", ["invoke", "mouse"])
+def test_click_can_destroy_its_control(monkeypatch: pytest.MonkeyPatch, method: str) -> None:
+    calls: list[str] = []
+
+    def close() -> None:
+        calls.append("close")
+
+    def describe(control: object) -> dict[str, str]:
+        assert not calls, "control no longer exists after the click"
+        calls.append("describe")
+        return {"name": "Close", "auto_id": "1006"}
+
+    el = SimpleNamespace(invoke=close, click_input=close)
+    monkeypatch.setattr(ui, "_window", lambda *args: SimpleNamespace(set_focus=lambda: None))
+    monkeypatch.setattr(ui, "_resolve", lambda *args: SimpleNamespace(wrapper_object=lambda: el))
+    monkeypatch.setattr(ui, "_describe", describe)
+    monkeypatch.setattr(ui.time, "sleep", lambda seconds: None)
+    assert ui.click("test", None, {}, method=method) == {"name": "Close", "auto_id": "1006"}
+    assert calls == ["describe", "close"]
+
+
 def test_datawindow_auto_never_attempts_value_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
     el = SimpleNamespace(

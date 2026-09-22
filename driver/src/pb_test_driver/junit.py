@@ -1,4 +1,4 @@
-"""Read the JUnit XML written by `n_test_report.of_junit_xml`."""
+"""Offline reader for legacy v0.1 JUnit reports; not used by JSON execution."""
 
 from __future__ import annotations
 

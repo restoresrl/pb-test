@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pb-test-driver"
-version = "0.1.0"
-description = "Run a PowerBuilder executable, catch its runtime error dialog, read JUnit results, and drive its windows through UI Automation. MCP server and CLI."
+version = "0.2.0"
+description = "Prepare PowerBuilder JSON test requests for IDE or EXE runs, validate reports, and drive executable windows. MCP server and CLI."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

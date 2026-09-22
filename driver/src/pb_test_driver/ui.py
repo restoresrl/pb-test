@@ -209,6 +209,8 @@ def click(
     win = _window(run_id, window)
     win.set_focus()
     el = _resolve(run_id, window, selector).wrapper_object()
+    # A successful click can destroy the control or terminate its process.
+    description = _describe(el)
     if method == "invoke":
         try:
             el.invoke()
@@ -219,7 +221,7 @@ def click(
     else:
         raise ValueError("method must be 'invoke' or 'mouse'")
     time.sleep(0.3)
-    return _describe(el)
+    return description
 
 
 def literal_keys(text: str) -> str:

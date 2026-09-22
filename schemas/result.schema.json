@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "pb-test result v1",
+  "type": "object",
+  "required": ["schema_version", "request_id", "application", "requested_suite", "suite", "completed", "tests", "passed", "failures", "errors", "runner_errors", "cases"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {"type": "string", "minLength": 1},
+    "application": {"type": "string", "minLength": 1},
+    "requested_suite": {"type": "string"},
+    "suite": {"type": "string"},
+    "completed": {"const": true},
+    "tests": {"type": "integer", "minimum": 0},
+    "passed": {"type": "integer", "minimum": 0},
+    "failures": {"type": "integer", "minimum": 0},
+    "errors": {"type": "integer", "minimum": 0},
+    "runner_errors": {"type": "array", "items": {"type": "string"}},
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["suite", "classname", "name", "status", "message", "time"],
+        "properties": {
+          "suite": {"type": "string", "minLength": 1},
+          "classname": {"type": "string", "minLength": 1},
+          "name": {"type": "string", "minLength": 1},
+          "status": {"enum": ["pass", "fail", "error"]},
+          "message": {"type": "string"},
+          "time": {"type": "number", "minimum": 0}
+        }
+      }
+    }
+  }
+}

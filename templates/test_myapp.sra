@@ -1,5 +1,5 @@
 ﻿$PBExportHeader$test_myapp.sra
-$PBExportComments$pb-test: test application. Rename to test_<yourapp> and keep appname in sync
+$PBExportComments$pb-test: demo host. Rename object/appname; the test adapter handles execution and feedback
 forward
 global type test_myapp from application
 end type
@@ -14,6 +14,14 @@ global type test_myapp from application
 string appname = "test_myapp"
 end type
 global test_myapp test_myapp
+
+type prototypes
+subroutine ExitProcess (ulong exit_code) library "kernel32.dll"
+end prototypes
+
+type variables
+n_test_app inv_tests
+end variables
 
 on test_myapp.create
 appname = "test_myapp"
@@ -32,11 +40,17 @@ destroy( error )
 destroy( message )
 end on
 
-event open;n_test_runner lnv_runner
-n_suite_all lnv_suite
-lnv_runner = create n_test_runner
-lnv_suite = create n_suite_all
-lnv_runner.of_run_from_commandline(lnv_suite)
-destroy lnv_runner
+event open;if inv_tests.of_requested() then
+	// Optional target initialization in the approved test environment.
+	inv_tests.of_run()
+	return
+end if
+// Normal application startup belongs here. This demo has no ordinary UI.
+// A real menu/button can create a fresh local n_test_app, call of_interactive(),
+// perform any required test initialization, then call of_run().
 end event
 
+event close;// Optional EXE host policy, not part of the test service. Never exits the IDE.
+// Required test cleanup belongs in the adapter's of_cleanup, before JSON publication.
+if inv_tests.of_finished() and Handle(GetApplication()) <> 0 then ExitProcess(inv_tests.of_result())
+end event

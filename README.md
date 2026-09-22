@@ -1,46 +1,106 @@
 # pb-test
 
-Testing for PowerBuilder applications, built to be driven by a coding
-agent through MCP. Two halves:
+Testing for PowerBuilder applications, with PowerScript assertions and a
+Python CLI/MCP driver. Tests can run inside an existing application target
+or a separate test target.
 
-- `framework/`: four PowerScript objects (`n_test_case`, `n_test_suite`,
-  `n_test_runner`, `n_test_report`) that run xUnit-style tests inside a
-  PowerBuilder test application and write a JUnit XML result file.
-- `driver/`: a Python package that starts the executable with the right
-  runtime, catches the "application execution error" dialog, parses the
-  results, and drives windows and DataWindows through UI Automation.
-  It is an MCP server first and a command line second.
+Both IDE and EXE execution use a one-shot JSON request and a JSON report:
 
-`pb-test` sits next to [`pb-orca-mcp`](https://github.com/restoresrl/pb-orca-mcp),
-which builds the PBLs and the exe, and is orchestrated by the `pb-test`
-skill of [`pb-ai-code`](https://github.com/restoresrl/pb-ai-code). It works
-without either: the framework is plain PowerScript, the driver a plain CLI.
+- During development, the agent prepares a request and asks the user to
+  run the target in the IDE. No EXE build is required. PowerBuilder still
+  compiles the necessary objects.
+- After a build, the driver prepares the same request and starts the EXE.
+  It also checks process exit, runtime-error dialogs and timeout.
 
-The framework and driver are verified together on PB 2022 R3 build
-3397. UI reading, editing and runtime-error detection also passed on
-PB 2019 R3 build 2803, with the loaded runtime DLL checked. PB 2025 R2
-is unverified: its ORCA DLL failed to load in the test environment.
+The driver does not build PowerBuilder artifacts. Use the IDE or
+[`pb-orca-mcp`](https://github.com/restoresrl/pb-orca-mcp) for that.
+[`pb-ai-code`](https://github.com/restoresrl/pb-ai-code) supplies the agent
+workflows for setup and use.
 
 ## Install
 
+v0.2.0 replaces the v0.1.0 XML protocol with JSON. Framework and driver
+must come from the same version; a v0.1.0 driver cannot run these requests.
+
 ```powershell
-uv tool install "git+https://github.com/restoresrl/pb-test@v0.1.0#subdirectory=driver"
+uv tool install "git+https://github.com/restoresrl/pb-test@v0.2.0#subdirectory=driver"
 pb-test --version
 ```
 
-The Python wheel contains only the driver. Download the source archive
-from [v0.1.0](https://github.com/restoresrl/pb-test/releases/tag/v0.1.0)
-or clone that tag for the PowerScript sources and templates. Build the
-framework PBL from source
-with ORCA as described in [`docs/adding-a-test-target.md`](docs/adding-a-test-target.md),
-or import the four `.sru` files into a `pbtest.pbl` in the IDE.
+The wheel contains only the driver, not the PowerScript sources or
+schemas. Get those from the matching tag's source archive. Updating a
+project's framework is a deliberate change, not part of a test run.
 
-## Writing a test
+The framework was verified on PB 2022 R3 build 3397. Earlier UI checks
+also passed on PB 2019 R3 build 2803. See [validation](docs/validation.md)
+for what this release actually exercises and what remains unchecked.
 
-A test case is a nonvisual object inherited from `n_test_case`. Every
-event whose name starts with `test_` and has a script is a test; `setup`
-and `teardown` run around each one. Assertions collect failures and let
-the test continue:
+## Setup
+
+For an existing application, follow
+[Integrating tests into an application](docs/integrating-tests.md).
+Each target chooses its own default suite and initialization/cleanup hooks.
+The host reads the request early, before opening connections, then runs
+the suite when its approved test environment is ready.
+
+For an isolated test application, follow
+[Adding a test target](docs/adding-a-test-target.md). The `templates/`
+directory includes an Application object, target adapter, target, root
+suite and example case. The example deliberately contains a failure and an error.
+
+Import the framework into `pbtest.pbl` in this order:
+
+```text
+n_test_listener → n_test_report → n_test_case → n_test_suite
+→ n_test_request → n_test_runner → n_test_options → w_test_setup
+→ w_test_progress → n_test_progress → n_test_session
+```
+
+Import cases and suites next, then the target's `n_test_app` adapter.
+PBLs are generated artifacts; keep the `.sru` and `.srw` sources in version
+control.
+
+Declare `n_test_app inv_tests` as an instance variable; it is
+auto-instantiated. Open, or another approved entry point, needs only:
+
+```powerscript
+if inv_tests.of_requested() then
+    // Optional target-specific test initialization.
+    inv_tests.of_run()
+    return
+end if
+// Normal application startup.
+```
+
+The adapter registers typed suites once and can override `of_cleanup()`.
+The service manages the request, runner, JSON and IDE progress window,
+without closing the host application. Rejected requests also enter the
+test branch; check `of_error()` before initialization with side effects.
+See the integration guide for asynchronous startup and EXE exit policy.
+
+A menu, toolbar or development-only action can offer manual execution with
+no agent and no pre-existing request:
+
+```powerscript
+n_test_app lnv_tests
+if lnv_tests.of_interactive() then
+    // Optional target-specific test initialization.
+    lnv_tests.of_run()
+end if
+```
+
+`of_interactive()` opens a setup window for the typed suite and JSON result
+path. Start creates and acquires the same one-shot JSON request used by the
+driver. A fresh local adapter permits another manual run after the previous
+result window has closed.
+
+## Writing tests
+
+A case inherits from `n_test_case`. Each scripted event named `test_*` is a
+test, including inherited events below the framework base class. `setup`
+and `teardown` run around each test. The case instance is reused, so reset
+state in those hooks. Assertions collect failures without stopping the
+script:
 
 ```text
 event test_lower;of_assert_equal("hello", Lower("HELLO"), "Lower")
@@ -48,14 +108,13 @@ of_assert_true(Pos("hello", "ell") = 2, "Pos finds the substring")
 end event
 ```
 
-`of_assert_equal` is overloaded for string, long, decimal, double,
-boolean, date and datetime. `of_assert_true`, `of_assert_false`,
-`of_assert_null`, `of_assert_not_null` and `of_fail` complete the set.
-A runtime error inside a test is caught and reported as an error with
-the event, object and line.
+`of_assert_equal` supports string, long, decimal, double, boolean, date
+and datetime. `of_assert_true`, `of_assert_false`, `of_assert_null`,
+`of_assert_not_null` and `of_fail` complete the set. Runtime exceptions
+inside tests are reported as errors. Expected exceptions must be caught
+and checked by the test itself.
 
-A suite is inherited from `n_test_suite` and lists its cases in
-`ue_execute`, one typed variable each:
+Suites inherit from `n_test_suite` and list typed cases in `ue_execute`:
 
 ```text
 event ue_execute;n_test_strings lnv_strings
@@ -64,64 +123,61 @@ of_run_case(lnv_strings)
 end event
 ```
 
-The typed variable matters. PowerBuilder links into the executable only
-the objects that are referenced statically; a class named only in a
-string is pruned, and `create using` fails at runtime with "Cannot find
-data type". Suites can run other suites with `of_run_suite`.
+Suites destroy the cases passed to them and can nest other suites with
+`of_run_suite`. The host maps requested names to typed suite instances;
+the runner checks that the supplied class matches the request. It never
+instantiates a class from a string. Typed references keep the suite and
+cases reachable by the linker. The sample registers only `n_suite_all`;
+add a typed branch in the adapter's `of_suite()` for each additional
+selectable suite.
+Selection is per suite, not per test event.
 
-The test application's `open` event creates the runner and hands it the
-root suite. `templates/` has a ready-made application object, suite and
-example case.
+## Run from the IDE
 
-## Running
-
-```powershell
-pb-test run C:\proj\test_myapp.exe --runtime-version 22.2
-```
-
-That starts the exe with `/out=<path> /exit`, waits, and prints:
-
-```text
-n_suite_all: 5 tests, 3 passed, 1 failed, 1 errors
-FAIL n_test_example.test_that_fails: this assertion is meant to fail: expected 'expected' but was 'actual'
-ERROR n_test_example.test_that_raises: Null object reference at line 3 in test_that_raises event of object n_test_example.
-```
-
-The exit code is the number of failed plus errored tests, capped at 2.
-A runtime error outside a test exits 3 with the dialog text; a timeout
-exits 4. A run with no executed tests, or passing XML with a nonzero
-process exit, also exits 3. Inside the IDE, run the test target and the
-runner shows the same summary in a message box.
-
-Command line switches the test application understands:
-
-| Switch | Meaning |
-| --- | --- |
-| `/out=<path>` | Where to write the JUnit XML. Default `<appname>.test.result.xml` in the current directory. |
-| `/suite=<class>` | Run this suite instead of the default. Only works when the class survived the link (PBD or PBR). |
-| `/exit` | Set the process exit code to the failure count and skip the message box. |
-
-## MCP server
+Use the actual startup directory configured for this target:
 
 ```powershell
-pb-test serve
+pb-test prepare --application myapp --work-dir C:\project --suite n_suite_orders --out C:\results\run-001\result.json
 ```
 
-| Tool | Does |
-| --- | --- |
-| `pb_run_start` | Start an exe with the runtime on PATH and `ACCESSIBILITY=1` in `pb.ini`. Returns a `run_id`. |
-| `pb_run_wait` | Wait for exit, a runtime error dialog, or a timeout. The dialog text comes back as data. |
-| `pb_run_stop`, `pb_run_list` | Kill a run; list runs. |
-| `pb_run_results` | Parse a JUnit XML file. |
-| `pb_ui_windows` | Top-level windows, including a runtime error dialog if showing. |
-| `pb_ui_controls` | Control tree of a window: type, name, `auto_id` (the PB control id), rectangle. |
-| `pb_ui_read` | Formatted values, labels and cell rectangles. `rows` groups cells by vertical position, not logical record. |
-| `pb_ui_click` | Invoke pattern or mouse click. |
-| `pb_ui_type` | ValuePattern for ordinary edits; keyboard input for DataWindow cells. |
-| `pb_ui_screenshot` | PNG of a window or control. |
-| `pb_ui_close` | Close a window through its title bar. |
+Keep the returned `receipt` path. The agent now asks the user to run the
+target in the IDE. A progress window shows the running test, counts, current-case progress
+and an accumulating PASS/FAIL/ERROR line for every completed test, then
+the outcome and report path. Close it when
+finished. Long tests can call `of_progress("message")` at cooperative
+checkpoints; blocking calls can still delay repainting. The agent does
+not start, automate or terminate the IDE. EXE runs have no window by
+default.
 
-Register it next to `pb-orca-mcp` in the client's MCP configuration:
+```powershell
+pb-test wait C:\results\run-001\result.json.request.json --timeout 60
+pb-test cleanup C:\results\run-001\result.json.request.json
+```
+
+A timeout does not cancel a request. Cleanup can cancel a pending request
+or release a completed slot; it refuses to remove an active request.
+
+## Run a built application
+
+```powershell
+pb-test run C:\build\orders.exe --application myapp --runtime-version 22.2 --suite n_suite_orders --out C:\results\run-002\result.json
+```
+
+`--application` is the Application object name, which may differ from the
+EXE name. The default working directory is the EXE directory; use
+`--work-dir` if the application needs another startup directory. The
+request is prepared there, without changing the application's normal
+arguments. Omit `--suite` for the target's default suite.
+
+The driver preserves existing reports and deployments. Every attempt
+needs a fresh output path. `--json` includes both process observations and
+correlated results. CLI exit codes: 0 pass, 1/2 failed tests (capped),
+3 invalid run, 4 timeout. See the [protocol](docs/json-protocol.md) for
+validation rules, crash recovery and migration from v0.1.0.
+
+## MCP
+
+Start the server with `pb-test serve`. Register a locally installed driver:
 
 ```json
 {
@@ -131,26 +187,43 @@ Register it next to `pb-orca-mcp` in the client's MCP configuration:
 }
 ```
 
-## What the driver relies on
+| Tool | Purpose |
+| --- | --- |
+| `pb_test_prepare` | Reserve a target slot and publish a JSON request; return a receipt |
+| `pb_test_status`, `pb_test_wait` | Inspect/wait for the matching result, including user-started IDE runs |
+| `pb_test_cleanup` | Cancel pending or release completed requests; retain reports |
+| `pb_run_start` | Start an EXE with its runtime; use the prepared request's working directory |
+| `pb_run_wait` | Observe exit, runtime dialog or timeout |
+| `pb_run_stop`, `pb_run_list` | Stop/list driver-owned processes, not IDE runs |
+| `pb_run_results` | Validate a JSON report; does not certify process exit |
+| `pb_ui_windows`, `pb_ui_controls` | Enumerate windows and controls |
+| `pb_ui_read`, `pb_ui_click`, `pb_ui_type` | Read values and interact with controls |
+| `pb_ui_screenshot`, `pb_ui_close` | Save a human-facing image or close a window |
 
-- UI Automation is off by default. `pb_run_start` writes
-  `[Application] ACCESSIBILITY=1` into `pb.ini` next to the exe. Without it
-  a DataWindow is an empty pane.
-- `pbacc.dll` and `PBAccessibility.dll` from the runtime directory have to
-  ship with a deployed application for the same tools to work there.
-- The runtime error dialog is found through the win32 backend. UI
-  Automation does not list it.
-- `<exe>.xml` can select the runtime through `RuntimePath`, overriding
-  PATH. The driver rejects conflicts with an explicit runtime request
-  and does not rewrite this file. Check it in each test deployment.
-- DataWindow `rows` are visual groups. Freeform fields from one record
-  can occupy several groups; `rows_are_logical=false` and the raw
-  `cells` make that limitation explicit. Do not infer record counts.
-- Build to a new location and replace an old deployment only after
-  success. pb-orca-mcp v0.2.9 supplies an icon and per-library flags
-  and rejects existing outputs without changing them. For v0.2.8,
-  pass both arguments explicitly as described in
-  `docs/adding-a-test-target.md`.
+For an IDE run: prepare, ask the user to Run, wait, inspect, cleanup.
+For an EXE run: prepare, start, wait for the process, inspect the request
+result, stop any remaining process, cleanup. A green report alone cannot
+certify a crash-free EXE run.
+
+## UI and runtime limits
+
+UI tools are independent of the test framework and still require an EXE
+started by the driver and an interactive Windows desktop. They do not
+automatically attach to the IDE.
+
+- The driver enables `[Application] ACCESSIBILITY=1` in `pb.ini` beside
+  the EXE by default. This can rewrite INI formatting/comments; use a
+  disposable deployment or disable the option when already configured.
+- Deploy `pbacc.dll` and `PBAccessibility.dll` with the runtime when
+  required for UI Automation.
+- DataWindow values are formatted strings. `rows` are visual groups,
+  not logical records (`rows_are_logical=false`). Off-screen cells and
+  untested styles are not guaranteed. Reread values after editing.
+- Runtime-error dialogs are detected with Win32, not UI Automation.
+- The EXE's runtime XML can override PATH. Conflicts with an explicit
+  runtime selection are rejected, not silently rewritten.
+- Tests are not a sandbox. Agree on database and service access before
+  startup; the framework does not provide rollback or isolation.
 
 ## Licence
 

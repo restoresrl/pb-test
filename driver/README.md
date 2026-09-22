@@ -1,70 +1,48 @@
-# pb-test driver
+# pb-test-driver
 
-Run PowerBuilder test executables, read their JUnit reports and inspect
-windows through UI Automation. The driver provides an MCP server and a
-CLI. It does not build PBLs or executables.
+Python CLI and MCP server for PowerBuilder test requests and UI checks.
+The driver prepares JSON requests and reads correlated JSON reports. It
+can wait for a user-started IDE run without an EXE, or start an existing
+EXE and check its process outcome. It does not compile PowerScript or
+operate the IDE's Run command.
 
-## Install and run
-
-Install the pinned release:
+Version 0.2.0 speaks JSON. v0.1.0 used JUnit XML; do not mix that driver
+with a JSON framework, or this one with a v0.1.0 host.
 
 ```powershell
-uv tool install "git+https://github.com/restoresrl/pb-test@v0.1.0#subdirectory=driver"
+uv tool install "git+https://github.com/restoresrl/pb-test@v0.2.0#subdirectory=driver"
 pb-test --version
-pb-test run C:\proj\test_myapp.exe --runtime-version 22.2
+```
+
+## Commands
+
+```powershell
+pb-test prepare --application myapp --work-dir C:\project --out C:\results\run-001\result.json
+# Ask the user to Run the target in the IDE, then:
+pb-test wait C:\results\run-001\result.json.request.json --timeout 60
+pb-test cleanup C:\results\run-001\result.json.request.json
+
+# Or run a built application:
+pb-test run C:\build\orders.exe --application myapp --suite n_suite_orders --out C:\results\run-002\result.json --runtime-version 22.2
+
+pb-test results C:\results\run-002\result.json --json
+pb-test runtimes
 pb-test serve
 ```
 
-You can also install a built `pb_test_driver-0.1.0-py3-none-any.whl`.
-The Python wheel contains the driver, not the PowerScript framework.
-Download the source archive from
-[v0.1.0](https://github.com/restoresrl/pb-test/releases/tag/v0.1.0) for
-`framework/`, `templates/` and `docs/adding-a-test-target.md`. Use those
-files to build a test target with ORCA or the IDE. From a local
-checkout, `uv tool install ./driver` installs the Python package.
+Use `status` for a nonblocking request check. `prepare` accepts `--ttl`
+in seconds (default 1800). `run` accepts `--work-dir`, otherwise it uses
+the EXE directory. Application identity is explicit because its object
+name can differ from the EXE stem.
 
-The runtime needs to be installed or deployed on Windows. UI actions
-need an interactive desktop. The driver reads `RuntimePath` from the
-executable's adjacent XML file and rejects a conflict with an explicit
-runtime selection before starting the process. Otherwise it puts the
-selected runtime on PATH. This does not verify every DLL the Windows
-loader will select.
+The receipt survives server restarts. Reports, receipts and summaries are
+evidence, not scratch. A timeout does not cancel or terminate an IDE run.
+Cleanup cancels pending requests or releases completed slots; it refuses
+active or invalid requests. The EXE command stops only its own process.
 
-By default, starting a run enables accessibility in `pb.ini` next to
-the executable. Use a disposable test deployment: updating an existing
-INI preserves parsed settings, but may change formatting and comments.
-MCP callers can set `accessibility=false` to leave that file alone.
-
-## Results and limits
-
-`pb-test run` exits 0 only with executed, passing tests and process exit
-code 0. Failed or errored tests return their count, capped at 2. A
-runtime error, missing report or inconsistent passing result returns 3;
-a timeout returns 4. The CLI stops its child process before returning.
-MCP callers must stop any run still alive after `pb_run_wait`.
-
-`pb_ui_read` exposes formatted cell values and their rectangles.
-Its `rows` field groups cells by vertical position. These are visual
-groups, not logical DataWindow rows: freeform layouts split one record
-across several groups. `rows_are_logical=false` states that limit;
-`cells` retains the individual observations. Off-screen cells and other
-presentation styles have not been validated.
-
-The framework and driver have been tested together on PB 2022 R3 build
-3397. UI reading, editing and runtime-error detection also passed on
-PB 2019 R3 build 2803. PB 2025 R2 remains unverified because the ORCA
-session could not load its DLL in the test environment.
-
-## MCP configuration
-
-```json
-{
-  "mcpServers": {
-    "pb-test": { "command": "pb-test", "args": ["serve"] }
-  }
-}
-```
-
-Tools cover process start/wait/stop, JUnit parsing, window/control
-inspection, click, text entry and screenshots. Runtime-error dialogs
-come back as structured data, including the R-code and message.
+The wheel excludes the PowerScript framework. Obtain matching sources
+and integrate the host hooks before preparing requests. See the source
+repository's [README](https://github.com/restoresrl/pb-test) and its JSON
+protocol and application-integration guides. UI tools still need an
+interactive Windows desktop and a driver-started EXE; no IDE attachment
+is implied by the file-based testing workflow.

@@ -1,5 +1,5 @@
 ﻿$PBExportHeader$n_test_report.sru
-$PBExportComments$pb-test: collects test outcomes and renders them as JUnit XML and as a text summary
+$PBExportComments$pb-test: collects test outcomes and publishes JSON reports
 forward
 global type n_test_report from nonvisualobject
 end type
@@ -8,6 +8,10 @@ end forward
 global type n_test_report from nonvisualobject
 end type
 global n_test_report n_test_report
+
+type prototypes
+function boolean MoveFileW (string existing_name, string new_name) library "kernel32.dll"
+end prototypes
 
 type variables
 private string is_suite[]
@@ -19,9 +23,16 @@ private long il_time_ms[]
 private long il_count = 0
 private long il_current = 0
 private long il_started_ms = 0
+private n_test_listener inv_listener
+private long il_case_done = 0
+private long il_case_total = 0
 end variables
 
 forward prototypes
+public subroutine of_set_listener (n_test_listener anv_listener)
+public subroutine of_begin_case (long al_total)
+public subroutine of_note (string as_message)
+private subroutine of_notify (boolean ab_running)
 public subroutine of_begin_test (string as_suite, string as_case, string as_test)
 public subroutine of_add_failure (string as_message)
 public subroutine of_add_error (string as_message)
@@ -29,13 +40,35 @@ public subroutine of_end_test ()
 public function long of_count ()
 public function long of_count_status (string as_status)
 public function string of_status (long al_index)
-public function string of_replace_all (string as_text, string as_from, string as_to)
-public function string of_xml_escape (string as_text)
-public function string of_seconds (long al_ms)
-public function string of_junit_xml (string as_name)
+public function string of_json (string as_request_id, string as_application, string as_requested_suite, string as_suite, string as_runner_error)
+public function integer of_publish (string as_path, string as_content)
 public function integer of_write_file (string as_path, string as_content)
 public function string of_summary ()
 end prototypes
+
+public subroutine of_set_listener (n_test_listener anv_listener);inv_listener = anv_listener
+end subroutine
+
+public subroutine of_begin_case (long al_total);il_case_done = 0
+il_case_total = al_total
+end subroutine
+
+public subroutine of_note (string as_message);if IsNull(inv_listener) then return
+if not IsValid(inv_listener) then return
+inv_listener.of_note(as_message)
+end subroutine
+
+private subroutine of_notify (boolean ab_running);long ll_completed, ll_passed
+if IsNull(inv_listener) then return
+if not IsValid(inv_listener) then return
+ll_completed = il_count
+ll_passed = of_count_status("pass")
+if ab_running then
+	ll_completed = ll_completed - 1
+	ll_passed = ll_passed - 1
+end if
+inv_listener.of_progress(is_suite[il_count], is_case[il_count], is_test[il_count], is_status[il_count], is_message[il_count], il_time_ms[il_count], ab_running, ll_completed, ll_passed, of_count_status("fail"), of_count_status("error"), il_case_done, il_case_total)
+end subroutine
 
 public subroutine of_begin_test (string as_suite, string as_case, string as_test);il_count = il_count + 1
 il_current = il_count
@@ -46,6 +79,7 @@ is_status[il_count] = "pass"
 is_message[il_count] = ""
 il_time_ms[il_count] = 0
 il_started_ms = Cpu()
+of_notify(true)
 end subroutine
 
 public subroutine of_add_failure (string as_message);if il_current = 0 then return
@@ -65,6 +99,8 @@ end subroutine
 public subroutine of_end_test ();if il_current = 0 then return
 il_time_ms[il_current] = Cpu() - il_started_ms
 il_current = 0
+il_case_done = il_case_done + 1
+of_notify(false)
 end subroutine
 
 public function long of_count ();return il_count
@@ -81,86 +117,48 @@ public function string of_status (long al_index);if al_index < 1 or al_index > i
 return is_status[al_index]
 end function
 
-public function string of_replace_all (string as_text, string as_from, string as_to);long ll_pos, ll_len
-if IsNull(as_text) then return ""
-ll_len = Len(as_from)
-ll_pos = Pos(as_text, as_from)
-do while ll_pos > 0
-	as_text = Replace(as_text, ll_pos, ll_len, as_to)
-	ll_pos = Pos(as_text, as_from, ll_pos + Len(as_to))
-loop
-return as_text
-end function
-
-public function string of_xml_escape (string as_text);if IsNull(as_text) then return ""
-as_text = of_replace_all(as_text, "&", "&amp;")
-as_text = of_replace_all(as_text, "<", "&lt;")
-as_text = of_replace_all(as_text, ">", "&gt;")
-as_text = of_replace_all(as_text, '"', "&quot;")
-return as_text
-end function
-
-public function string of_seconds (long al_ms);// locale-independent "s.mmm": String() would use the locale decimal separator
-long ll_s, ll_ms
-if al_ms < 0 then al_ms = 0
-ll_s = Int(al_ms / 1000)
-ll_ms = al_ms - ll_s * 1000
-return String(ll_s) + "." + Right("000" + String(ll_ms), 3)
-end function
-
-public function string of_junit_xml (string as_name);string ls_xml, ls_suites[], ls_suite, ls_nl
-long ll_i, ll_j, ll_n = 0, ll_tests, ll_fail, ll_err, ll_ms, ll_total_ms = 0
-boolean lb_seen
-ls_nl = "~r~n"
-for ll_i = 1 to il_count
-	lb_seen = false
-	for ll_j = 1 to ll_n
-		if ls_suites[ll_j] = is_suite[ll_i] then lb_seen = true
-	next
-	if not lb_seen then
-		ll_n = ll_n + 1
-		ls_suites[ll_n] = is_suite[ll_i]
-	end if
-	ll_total_ms = ll_total_ms + il_time_ms[ll_i]
-next
-ls_xml = '<?xml version="1.0" encoding="UTF-8"?>' + ls_nl
-ls_xml = ls_xml + '<testsuites name="' + of_xml_escape(as_name) + '" tests="' + String(il_count) + &
-	'" failures="' + String(of_count_status("fail")) + '" errors="' + String(of_count_status("error")) + &
-	'" time="' + of_seconds(ll_total_ms) + '">' + ls_nl
-for ll_j = 1 to ll_n
-	ls_suite = ls_suites[ll_j]
-	ll_tests = 0
-	ll_fail = 0
-	ll_err = 0
-	ll_ms = 0
+public function string of_json (string as_request_id, string as_application, string as_requested_suite, string as_suite, string as_runner_error);JSONGenerator lnv_json
+long ll_root, ll_cases, ll_case, ll_errors, ll_i
+string ls_json
+lnv_json = create JSONGenerator
+try
+	ll_root = lnv_json.CreateJsonObject()
+	lnv_json.AddItemNumber(ll_root, "schema_version", 1)
+	lnv_json.AddItemString(ll_root, "request_id", as_request_id)
+	lnv_json.AddItemString(ll_root, "application", as_application)
+	lnv_json.AddItemString(ll_root, "requested_suite", as_requested_suite)
+	lnv_json.AddItemString(ll_root, "suite", as_suite)
+	lnv_json.AddItemBoolean(ll_root, "completed", true)
+	lnv_json.AddItemNumber(ll_root, "tests", il_count)
+	lnv_json.AddItemNumber(ll_root, "passed", of_count_status("pass"))
+	lnv_json.AddItemNumber(ll_root, "failures", of_count_status("fail"))
+	lnv_json.AddItemNumber(ll_root, "errors", of_count_status("error"))
+	ll_errors = lnv_json.AddItemArray(ll_root, "runner_errors")
+	if as_runner_error <> "" then lnv_json.AddItemString(ll_errors, as_runner_error)
+	ll_cases = lnv_json.AddItemArray(ll_root, "cases")
 	for ll_i = 1 to il_count
-		if is_suite[ll_i] <> ls_suite then continue
-		ll_tests = ll_tests + 1
-		ll_ms = ll_ms + il_time_ms[ll_i]
-		if is_status[ll_i] = "fail" then ll_fail = ll_fail + 1
-		if is_status[ll_i] = "error" then ll_err = ll_err + 1
+		ll_case = lnv_json.AddItemObject(ll_cases)
+		lnv_json.AddItemString(ll_case, "suite", is_suite[ll_i])
+		lnv_json.AddItemString(ll_case, "classname", is_case[ll_i])
+		lnv_json.AddItemString(ll_case, "name", is_test[ll_i])
+		lnv_json.AddItemString(ll_case, "status", is_status[ll_i])
+		lnv_json.AddItemString(ll_case, "message", is_message[ll_i])
+		lnv_json.AddItemNumber(ll_case, "time", Max(0, il_time_ms[ll_i]) / 1000.0)
 	next
-	ls_xml = ls_xml + '  <testsuite name="' + of_xml_escape(ls_suite) + '" tests="' + String(ll_tests) + &
-		'" failures="' + String(ll_fail) + '" errors="' + String(ll_err) + '" time="' + of_seconds(ll_ms) + '">' + ls_nl
-	for ll_i = 1 to il_count
-		if is_suite[ll_i] <> ls_suite then continue
-		ls_xml = ls_xml + '    <testcase classname="' + of_xml_escape(is_case[ll_i]) + '" name="' + &
-			of_xml_escape(is_test[ll_i]) + '" time="' + of_seconds(il_time_ms[ll_i]) + '"'
-		choose case is_status[ll_i]
-			case "fail"
-				ls_xml = ls_xml + '>' + ls_nl + '      <failure message="' + of_xml_escape(is_message[ll_i]) + '">' + &
-					of_xml_escape(is_message[ll_i]) + '</failure>' + ls_nl + '    </testcase>' + ls_nl
-			case "error"
-				ls_xml = ls_xml + '>' + ls_nl + '      <error message="' + of_xml_escape(is_message[ll_i]) + '">' + &
-					of_xml_escape(is_message[ll_i]) + '</error>' + ls_nl + '    </testcase>' + ls_nl
-			case else
-				ls_xml = ls_xml + '/>' + ls_nl
-		end choose
-	next
-	ls_xml = ls_xml + '  </testsuite>' + ls_nl
-next
-ls_xml = ls_xml + '</testsuites>' + ls_nl
-return ls_xml
+	ls_json = lnv_json.GetJsonString()
+finally
+	destroy lnv_json
+end try
+return ls_json
+end function
+
+public function integer of_publish (string as_path, string as_content);// Same-directory, no-replace rename: readers never see a partial final report.
+string ls_temp
+ls_temp = as_path + ".tmp"
+if FileExists(as_path) or FileExists(ls_temp) then return -1
+if of_write_file(ls_temp, as_content) < 0 then return -1
+if not MoveFileW(ls_temp, as_path) then return -1
+return 1
 end function
 
 public function integer of_write_file (string as_path, string as_content);integer li_file
